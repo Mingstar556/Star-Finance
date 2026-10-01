@@ -83,7 +83,7 @@ window.Store = (function () {
     const list = users();
     list.push(user);
     saveUsers(list);
-    write(K_DATA(user.id), seedUserData(user.id, user.name));
+    write(K_DATA(user.id), emptyData());
     return user;
   }
 
@@ -124,8 +124,17 @@ window.Store = (function () {
     drop(K_SESSION);
   }
 
+  function emptyData() {
+    return {
+      opening: 0,
+      transactions: [],
+      budgets: { Housing: 1600, Groceries: 520, Dining: 320, Transport: 220, Shopping: 260, Subscriptions: 70, Utilities: 240, Health: 120, Entertainment: 150 },
+    };
+  }
+
   function resetData(userId, name) {
-    write(K_DATA(userId), seedUserData(userId, name));
+    // the demo account gets its sample dataset back; everyone else resets to a clean $0 slate
+    write(K_DATA(userId), userId === "u_demo_star" ? seedUserData(userId, name) : emptyData());
   }
 
   /* ---------------- session ---------------- */
@@ -271,8 +280,27 @@ window.Store = (function () {
 
     const pct = (cur, prev) => (prev > 0 ? ((cur - prev) / prev) * 100 : cur > 0 ? 100 : 0);
 
+    // Daily balance over the last 30 days (powers the 1M range)
+    const days = [];
+    const daily = [];
+    const asc = tx.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    let runD = data.opening;
+    let p = 0;
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      while (p < asc.length && asc[p].date <= iso) {
+        runD += asc[p].type === "income" ? asc[p].amount : -asc[p].amount;
+        p++;
+      }
+      days.push(iso);
+      daily.push(Math.round(runD * 100) / 100);
+    }
+
     return {
       months,
+      days,
+      daily,
       income, expense, balance,
       balanceNow: balance[balance.length - 1],
       monthIncome: curIn, monthExpense: curOut,
@@ -293,7 +321,10 @@ window.Store = (function () {
   /* ---------------- data access ---------------- */
   function getData(userId) {
     let d = read(K_DATA(userId));
-    if (!d) { d = seedUserData(userId, findById(userId)?.name || "user"); write(K_DATA(userId), d); }
+    if (!d) {
+      d = userId === "u_demo_star" ? seedUserData(userId, findById(userId)?.name || "user") : emptyData();
+      write(K_DATA(userId), d);
+    }
     return d;
   }
   function saveData(userId, data) { write(K_DATA(userId), data); }

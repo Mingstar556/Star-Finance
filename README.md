@@ -21,12 +21,12 @@ Then open [http://localhost:4890](http://localhost:4890).
 |---|---|
 | `demo@starfinance.app` | `demo1234` |
 
-…or press **“Explore the demo account”** on the login screen. You can also sign up with any email — each account gets its own seeded dataset.
+…or press **“Explore the demo account”** on the login screen — it's pre-filled with a year of realistic sample data so you can explore every chart. **Every account you create starts fresh at $0** with no transactions; your dashboard fills in as you add income and expenses.
 
 ## Features
 
 - **Login system** — sign up, log in, log out, change password, delete account. Passwords are salted + SHA-256 hashed, sessions persist for 30 days. *(Client-side demo auth — for production, connect a real backend; the `Store` API is designed to mirror one.)*
-- **Dashboard** — KPI cards with sparklines (balance, income, spending, savings rate), 6M/12M balance chart, spending-by-category donut, recent activity, quick actions.
+- **Dashboard** — KPI cards with sparklines (balance, income, spending, savings rate), balance chart with **1M (daily) / 6M / 12M** ranges, spending-by-category donut, recent activity, quick actions. New accounts get a clean start-at-zero experience with guided empty states.
 - **Analytics** — income vs expenses bars, net savings trend, monthly budget progress, all-time category breakdown.
 - **Transactions** — search, filter by type/category, sort, pagination, add/edit/delete with inline confirm.
 - **Settings** — profile, currency (USD/EUR/GBP), theme picker, security, data reset.

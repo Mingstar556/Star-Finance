@@ -211,7 +211,9 @@ window.Charts = (function () {
       const size = cfg.size || 210;
       const sw = 24, r = (size - sw) / 2 - 6;
       const c = size / 2;
-      const total = (cfg.total ?? cfg.segments.reduce((s, x) => s + x.value, 0)) || 1;
+      const segSum = cfg.segments.reduce((s, x) => s + x.value, 0);
+      const total = cfg.total ?? segSum;
+      const denom = segSum || 1;
       clear(el);
 
       const svg = svgEl("svg", { viewBox: `0 0 ${size} ${size}`, "aria-hidden": "true" });
@@ -222,7 +224,7 @@ window.Charts = (function () {
       const CIRC = 2 * Math.PI * r;
       let offset = 0;
       cfg.segments.forEach((seg) => {
-        const frac = seg.value / total;
+        const frac = seg.value / denom;
         const arc = svgEl("circle", {
           cx: c, cy: c, r, fill: "none", stroke: seg.color, "stroke-width": sw,
           "stroke-dasharray": `${Math.max(0, frac * CIRC - 2)} ${CIRC}`,

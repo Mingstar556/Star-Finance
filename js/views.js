@@ -21,24 +21,25 @@ window.Views = (function () {
     const cur = user.prefs.currency || "USD";
     const s = Store.compute(data);
     const pal = Store.palette();
+    const hasData = data.transactions.length > 0;
 
     // --- KPI row
     const kpis = el("div", { class: "kpi-grid" },
       kpiCard({
         label: "Total balance", icon: "wallet",
         value: s.balanceNow, cur, spark: s.balance,
-        delta: pctDelta(s.balance[11], s.balance[10]),
+        delta: s.balance[10] > 0 ? pctDelta(s.balance[11], s.balance[10]) : null,
         hint: "vs last month",
       }),
       kpiCard({
         label: "Income · this month", icon: "up", positive: true,
         value: s.monthIncome, cur, spark: s.income,
-        delta: s.incDelta, hint: "vs last month",
+        delta: hasData ? s.incDelta : null, hint: "vs last month",
       }),
       kpiCard({
         label: "Spending · this month", icon: "down", negative: true,
         value: s.monthExpense, cur, spark: s.expense,
-        delta: s.expDelta, hint: "vs last month", invert: true,
+        delta: hasData ? s.expDelta : null, hint: "vs last month", invert: true,
       }),
       kpiCard({
         label: "Savings rate", icon: "trend",
@@ -49,36 +50,49 @@ window.Views = (function () {
 
     // --- Main chart + donut
     const rangeSeg = el("div", { class: "seg" },
+      el("button", { "data-range": "1" }, "1M"),
       el("button", { "data-range": "6" }, "6M"),
       el("button", { class: "active", "data-range": "12" }, "12M")
     );
+    if (!hasData) rangeSeg.classList.add("hidden");
     const chartBody = el("div", { class: "chart-wrap" });
     const mainCard = el("section", { class: "card card-pad" },
       el("div", { class: "card-head", style: "padding:0; margin-bottom:6px;" },
         el("div", null,
           el("div", { class: "card-title" }, "Balance over time"),
-          el("div", { class: "card-sub" }, "Net worth trend across your accounts")
+          el("div", { class: "card-sub" }, hasData ? "Net worth trend across your accounts" : "Day-by-day (1M) and month-by-month (6M · 12M)")
         ),
         rangeSeg
       ),
       chartBody
     );
     const drawMain = (n) => {
-      const labels = s.months.slice(-n).map(monthLabel);
+      let labels, values;
+      if (n === 1) {
+        labels = s.days.map((d) => fmtDate(d, "day"));
+        values = s.daily;
+      } else {
+        labels = s.months.slice(-n).map(monthLabel);
+        values = s.balance.slice(-n);
+      }
       Charts.lineChart(chartBody, {
         labels,
-        series: [{ name: "Balance", color: pal[0], values: s.balance.slice(-n) }],
+        series: [{ name: "Balance", color: pal[0], values }],
         fmtY: (v) => fmtCompact(v, cur),
         fmtTip: (v) => fmtMoney(v, cur, { cents: false }),
         height: 300,
       });
     };
-    drawMain(12);
-    rangeSeg.addEventListener("click", (e) => {
-      const b = e.target.closest("button"); if (!b) return;
-      $$("button", rangeSeg).forEach((x) => x.classList.toggle("active", x === b));
-      drawMain(+b.dataset.range);
-    });
+    if (hasData) {
+      drawMain(12);
+      rangeSeg.addEventListener("click", (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        $$("button", rangeSeg).forEach((x) => x.classList.toggle("active", x === b));
+        drawMain(+b.dataset.range);
+      });
+    } else {
+      chartBody.appendChild(emptyCta(ctx, "Your balance story starts here", "Add your first income or expense and watch this chart come to life."));
+    }
 
     // donut
     const donutBody = el("div", { class: "chart-wrap", style: "display:flex; justify-content:center; padding: 8px 0 4px;" });
@@ -93,21 +107,28 @@ window.Views = (function () {
       donutBody, legend
     );
     const total = s.categories.reduce((a, c) => a + c.total, 0);
-    Charts.donutChart(donutBody, {
-      segments: s.categories.slice(0, 6).map((c, i) => ({ name: c.name, value: c.total, color: pal[i % pal.length] })),
-      total,
-      fmt: (v) => fmtMoney(v, cur, { cents: false }),
-      centerLabel: "SPENT",
-    });
-    s.categories.slice(0, 6).forEach((c, i) => {
-      legend.appendChild(el("div", { class: "legend-item" },
-        el("span", { class: "dot", style: `background:${pal[i % pal.length]}` }),
-        el("span", { class: "l-name" }, c.name),
-        el("span", { class: "l-val" }, fmtMoney(c.total, cur, { cents: false })),
-        el("span", { class: "l-pct" }, `${total ? Math.round((c.total / total) * 100) : 0}%`)
+    if (hasData && s.categories.length) {
+      Charts.donutChart(donutBody, {
+        segments: s.categories.slice(0, 6).map((c, i) => ({ name: c.name, value: c.total, color: pal[i % pal.length] })),
+        total,
+        fmt: (v) => fmtMoney(v, cur, { cents: false }),
+        centerLabel: "SPENT",
+      });
+      s.categories.slice(0, 6).forEach((c, i) => {
+        legend.appendChild(el("div", { class: "legend-item" },
+          el("span", { class: "dot", style: `background:${pal[i % pal.length]}` }),
+          el("span", { class: "l-name" }, c.name),
+          el("span", { class: "l-val" }, fmtMoney(c.total, cur, { cents: false })),
+          el("span", { class: "l-pct" }, `${total ? Math.round((c.total / total) * 100) : 0}%`)
+        ));
+      });
+    } else {
+      donutBody.appendChild(el("div", { class: "empty", style: "padding: 44px 10px;" },
+        el("span", { html: I("pie") }),
+        el("b", null, hasData ? "No expenses this month" : "No spending yet"),
+        el("span", null, hasData ? "Log an expense this month to see the breakdown." : "Your category breakdown appears after your first expense.")
       ));
-    });
-    if (!s.categories.length) donutBody.appendChild(emptyHint("No expenses recorded yet this month."));
+    }
 
     // --- Recent activity + quick actions
     const list = el("div", { class: "tx-list" });
@@ -213,6 +234,17 @@ window.Views = (function () {
   function emptyHint(msg) {
     return el("div", { class: "empty", style: "padding:22px;" }, el("span", null, msg));
   }
+  function emptyCta(ctx, title, msg) {
+    return el("div", { class: "empty", style: "padding: 56px 18px;" },
+      el("span", { html: I("chart") }),
+      el("b", null, title),
+      el("span", { style: "max-width: 40ch;" }, msg),
+      el("div", { style: "display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:center;" },
+        el("button", { class: "btn btn-primary", onclick: () => ctx.openTxModal("income"), html: `${I("up")}<span>Add income</span>` }),
+        el("button", { class: "btn btn-ghost", onclick: () => ctx.openTxModal("expense"), html: `${I("down")}<span>Add expense</span>` })
+      )
+    );
+  }
 
   /* ============================================================
      ANALYTICS
@@ -222,6 +254,21 @@ window.Views = (function () {
     const cur = user.prefs.currency || "USD";
     const s = Store.compute(data);
     const pal = Store.palette();
+
+    if (!data.transactions.length) {
+      view.appendChild(el("section", { class: "card" },
+        el("div", { class: "empty", style: "padding: 80px 24px;" },
+          el("span", { html: I("chart") }),
+          el("b", null, "Nothing to analyze yet"),
+          el("span", { style: "max-width: 44ch;" }, "Once you add transactions, this page fills with cash-flow charts, budget progress and category insights."),
+          el("div", { style: "display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:center;" },
+            el("button", { class: "btn btn-primary", onclick: () => ctx.openTxModal("income"), html: `${I("up")}<span>Add income</span>` }),
+            el("button", { class: "btn btn-ghost", onclick: () => ctx.openTxModal("expense"), html: `${I("down")}<span>Add expense</span>` })
+          )
+        )
+      ));
+      return;
+    }
 
     const incExpBody = el("div", { class: "chart-wrap" });
     Charts.barChart(incExpBody, {
@@ -675,13 +722,20 @@ window.Views = (function () {
     );
 
     // --- Danger zone
-    const resetBtn = el("button", { class: "btn btn-ghost", type: "button" }, "Reset demo data");
+    const isDemo = user.id === "u_demo_star";
+    const resetBtn = el("button", { class: "btn btn-ghost", type: "button" }, isDemo ? "Reset demo data" : "Reset my data");
     resetBtn.addEventListener("click", () => {
-      confirmModal("Reset demo data?", "This restores a fresh set of sample transactions and clears your changes.", async () => {
-        Store.resetData(user.id, user.name);
-        ctx.refresh();
-        toast("Demo data restored", "success");
-      });
+      confirmModal(
+        isDemo ? "Reset demo data?" : "Reset all data?",
+        isDemo
+          ? "This restores a fresh set of sample transactions and clears your changes."
+          : "This permanently clears every transaction and returns your balance to $0.",
+        async () => {
+          Store.resetData(user.id, user.name);
+          ctx.refresh();
+          toast(isDemo ? "Demo data restored" : "All data cleared — starting from $0", "success");
+        }
+      );
     });
     const delBtn = el("button", { class: "btn btn-danger", type: "button" }, "Delete account");
     delBtn.addEventListener("click", () => {
@@ -695,7 +749,10 @@ window.Views = (function () {
       el("div", { class: "card-title" }, "Danger zone"),
       el("div", { class: "card-sub", style: "margin-bottom:16px;" }, "Irreversible actions — proceed carefully"),
       el("div", { class: "set-row" },
-        el("div", { class: "s-label" }, el("b", null, "Reset demo data"), el("small", null, "Restore sample transactions and budgets")),
+        el("div", { class: "s-label" },
+          el("b", null, isDemo ? "Reset demo data" : "Reset my data"),
+          el("small", null, isDemo ? "Restore sample transactions and budgets" : "Clear all transactions and start from zero")
+        ),
         resetBtn
       ),
       el("div", { class: "set-row" },

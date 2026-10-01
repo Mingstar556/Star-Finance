@@ -116,6 +116,7 @@ window.U = (function () {
   function fmtDate(iso, style = "short") {
     const d = new Date(iso + (iso.length === 10 ? "T12:00:00" : ""));
     if (isNaN(d)) return iso;
+    if (style === "day") return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     return d.toLocaleDateString(undefined, style === "short" ? { month: "short", day: "numeric", year: "numeric" } : { month: "long", day: "numeric" });
   }
   function monthLabel(isoMonth) {
