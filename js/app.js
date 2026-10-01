@@ -70,7 +70,7 @@
     const view = $("#view");
     view.innerHTML = "";
 
-    $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.route === route));
+    $$(".nav-item, .bn-item").forEach((n) => n.classList.toggle("active", n.dataset.route === route));
     const titles = { dashboard: "Dashboard", analytics: "Analytics", transactions: "Transactions", settings: "Settings" };
     $("#pageTitle").textContent = titles[route];
     const sub = Views.SUBTITLES[route]();
@@ -148,9 +148,17 @@
     showAuth();
   }
 
+  /* ---------------- service worker (offline / installable on Android) ---------------- */
+  function registerSW() {
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => { /* offline support unavailable */ });
+      });
+    }
+  }
+
   /* ---------------- boot ---------------- */
-  function boot() {
-    Store.init();
+  async function boot() {
     U.hydrateIcons();
 
     // wire shell
@@ -166,9 +174,14 @@
     $("#themeBtn").addEventListener("click", toggleTheme);
     $("#logoutBtn").addEventListener("click", doLogout);
     $("#addBtn").addEventListener("click", openAddModal);
+    $("#fabAdd").addEventListener("click", openAddModal);
     $("#nav").addEventListener("click", closeDrawer);
     wireMenu();
     window.addEventListener("hashchange", renderRoute);
+    registerSW();
+
+    // open the database, migrate legacy data, ensure demo account
+    try { await Store.init(); } catch (e) { /* run in-memory */ }
 
     // session?
     const sess = Store.getSession();

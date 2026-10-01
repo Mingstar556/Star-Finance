@@ -38,20 +38,58 @@ Then open [http://localhost:4890](http://localhost:4890).
 
 ```
 Star Finance/
-├── index.html        # app shell
+├── index.html        # app shell (sidebar on desktop, bottom tabs + FAB on mobile)
+├── manifest.json     # PWA manifest — installable on Android
+├── sw.js             # service worker — offline support
+├── icon-512.png      # app icon
 ├── css/styles.css    # design system (both themes)
 ├── js/
 │   ├── util.js       # helpers, icons, formatting, toasts
 │   ├── charts.js     # SVG chart engine
-│   ├── store.js      # accounts, sessions, data, statistics
+│   ├── db.js         # StarDB — tiny on-device document DB (IndexedDB)
+│   ├── store.js      # accounts, sessions, ledgers on top of StarDB
 │   ├── auth.js       # login / sign-up screen
 │   ├── views.js      # dashboard, analytics, transactions, settings
 │   └── app.js        # routing & shell wiring
 └── serve.js          # optional zero-dep local server
 ```
 
+## Use it on your Android (personal setup)
+
+Star Finance is an installable app (PWA): it runs full-screen from your home screen, uses an on-device database, and works offline.
+
+### Option A — host it (recommended, gives install + offline)
+
+1. **Netlify Drop** (free, keeps this repo private): go to `app.netlify.com/drop`, drag this folder in, and you get an `https://…netlify.app` URL in seconds.
+2. On your Android phone, open that URL in **Chrome**.
+3. Tap **⋮ → Add to Home screen** (or "Install app") → confirm.
+4. Launch **StarFin** from your home screen — it opens full-screen like a native app, keeps you logged in, and works with no internet.
+
+*(GitHub Pages also works if you make the repo public — Pages requires HTTPS, which is what enables the install + offline behavior.)*
+
+### Option B — run it from your PC on the same Wi-Fi
+
+```bash
+node serve.js
+```
+It prints a **Network** URL like `http://192.168.x.x:4890` — open that in Chrome on your phone. (No HTTPS on this path, so no home-screen install; use it inside the browser tab.)
+
+## Your data — StarDB (the mini database)
+
+All data lives in **StarDB**, a tiny document database built into the app (`js/db.js`):
+
+| Table | Contents |
+|---|---|
+| `users` | accounts (name, salted + SHA-256 password hash, prefs) |
+| `data` | each account's ledger: opening balance, transactions, budgets |
+| `session` | current login (30-day session) |
+
+- Engine: **IndexedDB** (falls back to localStorage automatically) — private to your device, nothing ever leaves it.
+- **Settings → Data & backup**: **Export** downloads a JSON backup of everything; **Restore** replaces device data with a backup file. Export a backup regularly — clearing Chrome's site data wipes the database.
+
 ## Deploying
 
 It's a static site — drop the folder on **Netlify**, **Vercel**, **GitHub Pages**, **Cloudflare Pages** or any web host. No server-side code required.
 
-> **Note:** this build stores accounts and data in the browser's `localStorage` (per browser/profile). It is a demo-grade auth system; don't use it to guard real financial data without a backend.
+> **Note:** auth is client-side (salted + hashed) and data stays on-device by design — this is a personal single-device app. Don't treat it as multi-user or bank-grade without adding a real backend.
+

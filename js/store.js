@@ -1,41 +1,25 @@
 /* ============================================================
    Star Finance — store.js
-   Persistence (localStorage), accounts, demo data, statistics
-   NOTE: demo-grade client-side auth. For production, wire this
-   to a real backend (the API surface here mirrors one).
+   Accounts, sessions and per-user ledgers, backed by StarDB
+   (js/db.js — IndexedDB with localStorage fallback).
+
+   Architecture: everything is mirrored in memory (instant sync
+   reads for the UI); every mutation is written through to the
+   database. Legacy localStorage data is migrated automatically.
    ============================================================ */
 window.Store = (function () {
   "use strict";
 
-  const K_USERS = "sf_users_v1";
-  const K_SESSION = "sf_session_v1";
-  const K_DATA = (id) => `sf_data_${id}`;
   const SESSION_DAYS = 30;
-
-  let mem = {}; // fallback when localStorage is unavailable
-  let storageOK = true;
-  try { localStorage.setItem("sf_probe", "1"); localStorage.removeItem("sf_probe"); }
-  catch (e) { storageOK = false; }
-
-  function read(key) {
-    if (storageOK) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } }
-    return mem[key] ?? null;
-  }
-  function write(key, val) {
-    if (storageOK) { try { localStorage.setItem(key, JSON.stringify(val)); return; } catch (e) { /* fall through */ } }
-    mem[key] = val;
-  }
-  function drop(key) {
-    if (storageOK) { try { localStorage.removeItem(key); } catch (e) {} }
-    delete mem[key];
-  }
+  const state = { users: [], session: null, data: {} }; // in-memory mirror
+  let db = null;      // active engine (set by init)
+  let ready = false;
 
   /* ---------------- password hashing (SHA-256 + salt, sync fallback) ---------------- */
   function bufHex(buf) {
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
   }
   function fallbackHash(s) {
-    // FNV-1a x4 rounds — only used if WebCrypto is unavailable (e.g. old browser)
     let h1 = 0x811c9dc5, h2 = 0x1000193;
     for (let r = 0; r < 4; r++) {
       for (let i = 0; i < s.length; i++) { h1 ^= s.charCodeAt(i); h1 = Math.imul(h1, 16777619) >>> 0; h2 = (Math.imul(h2 ^ s.charCodeAt(s.length - 1 - i), 2246822519)) >>> 0; }
@@ -59,15 +43,22 @@ window.Store = (function () {
     return bufHex(a.buffer);
   }
 
-  /* ---------------- users ---------------- */
-  function users() { return read(K_USERS) || []; }
-  function saveUsers(list) { write(K_USERS, list); }
+  /* ---------------- write-through persistence ---------------- */
+  async function put(table, doc) {
+    if (!db) return;
+    try { await db.set(table, doc); } catch (e) { /* stays in memory */ }
+  }
+  const persistUsers = () => put("users", state.users);
+  const persistData = () => put("data", state.data);
+  const persistSession = () => put("session", state.session);
 
+  /* ---------------- users (in-memory, sync) ---------------- */
+  function users() { return state.users; }
   function findByEmail(email) {
     const e = String(email || "").trim().toLowerCase();
-    return users().find((u) => u.email === e) || null;
+    return state.users.find((u) => u.email === e) || null;
   }
-  function findById(id) { return users().find((u) => u.id === id) || null; }
+  function findById(id) { return state.users.find((u) => u.id === id) || null; }
 
   async function createUser(name, email, password) {
     const salt = makeSalt();
@@ -80,10 +71,10 @@ window.Store = (function () {
       createdAt: new Date().toISOString(),
       prefs: { theme: "royal", currency: "USD" },
     };
-    const list = users();
-    list.push(user);
-    saveUsers(list);
-    write(K_DATA(user.id), emptyData());
+    state.users.push(user);
+    state.data[user.id] = emptyData();
+    await persistUsers();
+    await persistData();
     return user;
   }
 
@@ -94,36 +85,58 @@ window.Store = (function () {
 
   async function changePassword(user, currentPw, newPw) {
     if (!(await verifyPassword(user, currentPw))) return false;
-    const list = users();
-    const u = list.find((x) => x.id === user.id);
+    const u = findById(user.id);
     u.salt = makeSalt();
     u.hash = await hashPassword(newPw, u.salt);
-    saveUsers(list);
+    await persistUsers();
     return true;
   }
 
   function updateProfile(userId, patch) {
-    const list = users();
-    const u = list.find((x) => x.id === userId);
+    const u = findById(userId);
     if (!u) return null;
     Object.assign(u, patch);
-    saveUsers(list);
+    persistUsers();
     return u;
   }
   function setPrefs(userId, prefs) {
-    const u = updateProfile(userId, {});
+    const u = findById(userId);
     if (!u) return;
     u.prefs = Object.assign({}, u.prefs, prefs);
-    saveUsers(users());
+    persistUsers();
     return u;
   }
 
   function deleteAccount(userId) {
-    saveUsers(users().filter((u) => u.id !== userId));
-    drop(K_DATA(userId));
-    drop(K_SESSION);
+    state.users = state.users.filter((u) => u.id !== userId);
+    delete state.data[userId];
+    state.session = null;
+    persistUsers();
+    persistData();
+    persistSession();
   }
 
+  function resetData(userId, name) {
+    // the demo account gets its sample dataset back; everyone else resets to a clean $0 slate
+    state.data[userId] = userId === "u_demo_star" ? seedUserData(userId, name) : emptyData();
+    persistData();
+  }
+
+  /* ---------------- session ---------------- */
+  function createSession(userId) {
+    const s = { userId, token: makeSalt(), exp: Date.now() + SESSION_DAYS * 864e5 };
+    state.session = s;
+    persistSession();
+    return s;
+  }
+  function getSession() {
+    const s = state.session;
+    if (!s || !s.exp || s.exp < Date.now() || !findById(s.userId)) return null;
+    return s;
+  }
+  function endSession() { state.session = null; persistSession(); }
+
+  /* ---------------- ledger data ---------------- */
   function emptyData() {
     return {
       opening: 0,
@@ -132,25 +145,115 @@ window.Store = (function () {
     };
   }
 
-  function resetData(userId, name) {
-    // the demo account gets its sample dataset back; everyone else resets to a clean $0 slate
-    write(K_DATA(userId), userId === "u_demo_star" ? seedUserData(userId, name) : emptyData());
+  function getData(userId) {
+    if (!state.data[userId]) {
+      state.data[userId] = userId === "u_demo_star" ? seedUserData(userId, findById(userId)?.name || "user") : emptyData();
+      persistData();
+    }
+    return state.data[userId];
+  }
+  function saveData(userId, data) { state.data[userId] = data; persistData(); }
+
+  function addTransaction(userId, t) {
+    const d = getData(userId);
+    d.transactions.unshift({ id: U.uid(), date: t.date, desc: t.desc, category: t.category, type: t.type, amount: Math.round(t.amount * 100) / 100, account: t.account || "Star Checking" });
+    d.transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    persistData();
+  }
+  function updateTransaction(userId, id, patch) {
+    const d = getData(userId);
+    const t = d.transactions.find((x) => x.id === id);
+    if (t) Object.assign(t, patch);
+    d.transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    persistData();
+  }
+  function deleteTransaction(userId, id) {
+    const d = getData(userId);
+    d.transactions = d.transactions.filter((x) => x.id !== id);
+    persistData();
   }
 
-  /* ---------------- session ---------------- */
-  function createSession(userId) {
-    const s = { userId, token: makeSalt(), exp: Date.now() + SESSION_DAYS * 864e5 };
-    write(K_SESSION, s);
-    return s;
+  /* ---------------- backup export / import ---------------- */
+  function exportAll() {
+    return JSON.stringify({
+      app: "star-finance",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      users: state.users,
+      data: state.data,
+    }, null, 2);
   }
-  function getSession() {
-    const s = read(K_SESSION);
-    if (!s || !s.exp || s.exp < Date.now()) { drop(K_SESSION); return null; }
-    return findById(s.userId) ? s : null;
+  function importAll(json) {
+    const parsed = typeof json === "string" ? JSON.parse(json) : json;
+    if (!parsed || parsed.app !== "star-finance" || !Array.isArray(parsed.users) || typeof parsed.data !== "object") {
+      throw new Error("Not a Star Finance backup file");
+    }
+    state.users = parsed.users;
+    state.data = parsed.data;
+    state.session = state.session && findById(state.session.userId) ? state.session : null;
+    persistUsers();
+    persistData();
+    persistSession();
+    return { users: state.users.length, accounts: Object.keys(state.data).length };
   }
-  function endSession() { drop(K_SESSION); }
+  function storageMode() { return db ? db.name : "Memory only"; }
 
-  /* ---------------- demo data ---------------- */
+  /* ---------------- boot: hydrate, migrate, demo account ---------------- */
+  async function init() {
+    db = await DB.ready();
+    state.users = (await db.get("users")) || [];
+    state.data = (await db.get("data")) || {};
+    state.session = (await db.get("session")) || null;
+
+    // one-time migration from the old localStorage-only build
+    if (!state.users.length) {
+      try {
+        const legacy = JSON.parse(localStorage.getItem("sf_users_v1") || "null");
+        if (Array.isArray(legacy) && legacy.length) {
+          state.users = legacy;
+          for (const u of legacy) {
+            try {
+              const raw = JSON.parse(localStorage.getItem("sf_data_" + u.id) || "null");
+              if (raw) state.data[u.id] = raw;
+            } catch (e) { /* skip bad row */ }
+          }
+          const sess = JSON.parse(localStorage.getItem("sf_session_v1") || "null");
+          if (sess && sess.exp > Date.now() && findById(sess.userId)) state.session = sess;
+          await persistUsers();
+          await persistData();
+          await persistSession();
+        }
+      } catch (e) { /* no legacy data */ }
+    }
+
+    await ensureDemo();
+    ready = true;
+  }
+
+  async function ensureDemo() {
+    let u = findById("u_demo_star") || findByEmail("demo@starfinance.app");
+    if (!u) {
+      const salt = makeSalt();
+      u = {
+        id: "u_demo_star",
+        name: "Aurora Lane",
+        email: "demo@starfinance.app",
+        salt,
+        hash: await hashPassword("demo1234", salt),
+        createdAt: new Date().toISOString(),
+        prefs: { theme: "royal", currency: "USD" },
+      };
+      state.users.push(u);
+      state.data[u.id] = seedUserData(u.id, u.name);
+      await persistUsers();
+      await persistData();
+    } else if (!u.hash) {
+      u.hash = await hashPassword("demo1234", u.salt);
+      await persistUsers();
+    }
+  }
+
+  /* ---------------- demo seed data ---------------- */
   const CATEGORIES = {
     income: ["Salary", "Freelance", "Investments", "Other income"],
     expense: ["Housing", "Groceries", "Dining", "Transport", "Subscriptions", "Shopping", "Utilities", "Health", "Entertainment"],
@@ -224,7 +327,6 @@ window.Store = (function () {
 
   function seedUserData(id, name) {
     const data = seedTestData(name);
-    // swap in stable ids
     data.transactions.forEach((t, i) => (t.id = `${id}_${i}`));
     return data;
   }
@@ -239,7 +341,6 @@ window.Store = (function () {
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevKey = `${prevDate.getFullYear()}-${pad(prevDate.getMonth() + 1)}`;
 
-    // 12 month window (oldest -> current)
     const months = [];
     for (let back = 11; back >= 0; back--) {
       const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
@@ -254,7 +355,6 @@ window.Store = (function () {
     const income = months.map((m) => Math.round(sum(byMonth[m], "income") * 100) / 100);
     const expense = months.map((m) => Math.round(sum(byMonth[m], "expense") * 100) / 100);
 
-    // Balance: opening + cumulative net, sampled at each month end
     const balance = [];
     let run = data.opening;
     for (let i = 0; i < months.length; i++) {
@@ -267,14 +367,12 @@ window.Store = (function () {
     const curIn = sum(curTx, "income"), curOut = sum(curTx, "expense");
     const prevIn = sum(prevTx, "income"), prevOut = sum(prevTx, "expense");
 
-    // Category spend for current month
     const catMap = {};
     curTx.filter((t) => t.type === "expense").forEach((t) => { catMap[t.category] = (catMap[t.category] || 0) + t.amount; });
     const categories = Object.entries(catMap)
       .map(([name, total]) => ({ name, total: Math.round(total * 100) / 100 }))
       .sort((a, b) => b.total - a.total);
 
-    // all-time categories
     const allCat = {};
     tx.filter((t) => t.type === "expense").forEach((t) => { allCat[t.category] = (allCat[t.category] || 0) + t.amount; });
 
@@ -288,12 +386,12 @@ window.Store = (function () {
     let p = 0;
     for (let i = 29; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      while (p < asc.length && asc[p].date <= iso) {
+      const isoDay = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      while (p < asc.length && asc[p].date <= isoDay) {
         runD += asc[p].type === "income" ? asc[p].amount : -asc[p].amount;
         p++;
       }
-      days.push(iso);
+      days.push(isoDay);
       daily.push(Math.round(runD * 100) / 100);
     }
 
@@ -318,66 +416,13 @@ window.Store = (function () {
     return ["--c1", "--c2", "--c3", "--c4", "--c5", "--c6"].map((v) => css.getPropertyValue(v).trim() || "#d4af37");
   }
 
-  /* ---------------- data access ---------------- */
-  function getData(userId) {
-    let d = read(K_DATA(userId));
-    if (!d) {
-      d = userId === "u_demo_star" ? seedUserData(userId, findById(userId)?.name || "user") : emptyData();
-      write(K_DATA(userId), d);
-    }
-    return d;
-  }
-  function saveData(userId, data) { write(K_DATA(userId), data); }
-
-  function addTransaction(userId, t) {
-    const d = getData(userId);
-    d.transactions.unshift({ id: U.uid(), date: t.date, desc: t.desc, category: t.category, type: t.type, amount: Math.round(t.amount * 100) / 100, account: t.account || "Star Checking" });
-    d.transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    saveData(userId, d);
-  }
-  function updateTransaction(userId, id, patch) {
-    const d = getData(userId);
-    const t = d.transactions.find((x) => x.id === id);
-    if (t) Object.assign(t, patch);
-    d.transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    saveData(userId, d);
-  }
-  function deleteTransaction(userId, id) {
-    const d = getData(userId);
-    d.transactions = d.transactions.filter((x) => x.id !== id);
-    saveData(userId, d);
-  }
-
-  function init() {
-    // ensure demo account exists (demo@starfinance.app / demo1234)
-    if (!findByEmail("demo@starfinance.app")) {
-      const salt = makeSalt();
-      const user = {
-        id: "u_demo_star",
-        name: "Aurora Lane",
-        email: "demo@starfinance.app",
-        salt, hash: null, // filled async below
-        createdAt: new Date().toISOString(),
-        prefs: { theme: "royal", currency: "USD" },
-      };
-      const list = users();
-      list.push(user);
-      saveUsers(list);
-      write(K_DATA(user.id), seedUserData(user.id, user.name));
-      hashPassword("demo1234", salt).then((h) => {
-        const us = users();
-        const u = us.find((x) => x.id === user.id);
-        if (u && !u.hash) { u.hash = h; saveUsers(us); }
-      });
-    }
-  }
-
   return {
-    init, storageOK,
+    init, storageMode,
     findByEmail, findById, createUser, verifyPassword, changePassword,
     updateProfile, setPrefs, deleteAccount, resetData,
     createSession, getSession, endSession,
     getData, saveData, addTransaction, updateTransaction, deleteTransaction,
+    exportAll, importAll,
     compute, palette, CATEGORIES, CAT_ICONS, ACCOUNTS,
   };
 })();

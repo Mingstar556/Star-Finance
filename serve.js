@@ -29,5 +29,12 @@ http.createServer((req, res) => {
     res.end(buf);
   });
 }).listen(PORT, () => {
-  console.log(`\n  ★ Star Finance is running:\n\n     http://localhost:${PORT}\n\n  Demo login → demo@starfinance.app / demo1234\n`);
+  const os = require("os");
+  const ips = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((n) => n && n.family === "IPv4" && !n.internal)
+    .map((n) => n.address);
+  console.log(`\n  ★ Star Finance is running:\n\n     Local:   http://localhost:${PORT}`);
+  ips.forEach((ip) => console.log(`     Network: http://${ip}:${PORT}   ← open on your Android (same Wi-Fi)`));
+  console.log(`\n  Demo login → demo@starfinance.app / demo1234\n`);
 });

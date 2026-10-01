@@ -721,6 +721,66 @@ window.Views = (function () {
       pwForm
     );
 
+    // --- Data & backup (StarDB on-device database)
+    const fileI = el("input", { type: "file", accept: "application/json,.json", style: "display:none", "aria-hidden": "true" });
+    fileI.addEventListener("change", () => {
+      const f = fileI.files && fileI.files[0];
+      fileI.value = "";
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let parsed;
+        try { parsed = JSON.parse(String(reader.result)); }
+        catch (e) { toast("That file is not valid JSON", "error"); return; }
+        confirmModal(
+          "Restore this backup?",
+          "Everything currently stored on this device will be replaced by the backup file. This cannot be undone.",
+          () => {
+            try {
+              Store.importAll(parsed);
+              toast("Backup restored — reloading", "success");
+              setTimeout(() => location.reload(), 700);
+            } catch (e) {
+              toast(e.message || "Could not restore this backup", "error");
+            }
+          },
+          "Replace everything"
+        );
+      };
+      reader.readAsText(f);
+    });
+
+    const exportBtn = el("button", { class: "btn btn-ghost", type: "button", html: `${I("down")}<span>Export</span>` });
+    exportBtn.addEventListener("click", () => {
+      const blob = new Blob([Store.exportAll()], { type: "application/json" });
+      const a = el("a", { href: URL.createObjectURL(blob), download: `star-finance-backup-${U.todayISO()}.json` });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast("Backup downloaded", "success");
+    });
+    const importBtn = el("button", { class: "btn btn-ghost", type: "button", html: `${I("up")}<span>Restore</span>` });
+    importBtn.addEventListener("click", () => fileI.click());
+
+    const dataCard = el("section", { class: "card card-pad" },
+      fileI,
+      el("div", { class: "card-title" }, "Data & backup"),
+      el("div", { class: "card-sub", style: "margin-bottom:8px;" }, `StarDB — your on-device database · engine: ${Store.storageMode()}`),
+      el("div", { class: "set-row" },
+        el("div", { class: "s-label" }, el("b", null, "Storage engine"), el("small", null, "Everything lives in this device's database — nothing leaves your phone")),
+        el("span", { class: "chip income", style: "text-transform:none;" }, Store.storageMode().split(" ")[0])
+      ),
+      el("div", { class: "set-row" },
+        el("div", { class: "s-label" }, el("b", null, "Export backup"), el("small", null, "Download all accounts & ledgers as a JSON file")),
+        exportBtn
+      ),
+      el("div", { class: "set-row" },
+        el("div", { class: "s-label" }, el("b", null, "Restore backup"), el("small", null, "Replace everything on this device with a backup file")),
+        importBtn
+      )
+    );
+
     // --- Danger zone
     const isDemo = user.id === "u_demo_star";
     const resetBtn = el("button", { class: "btn btn-ghost", type: "button" }, isDemo ? "Reset demo data" : "Reset my data");
@@ -763,7 +823,8 @@ window.Views = (function () {
 
     view.append(
       grid(profileCard, appearanceCard, "settings-grid"),
-      grid(securityCard, dangerCard, "settings-grid")
+      grid(securityCard, dangerCard, "settings-grid"),
+      dataCard
     );
   }
 

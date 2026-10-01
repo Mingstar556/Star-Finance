@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Star Finance — a professional personal finance dashboard. Track balances, spending and investments in one place." />
   <meta name="theme-color" content="#0a0a0f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="StarFin" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-512.png" />
   <title>Star Finance — Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0f'/%3E%3Cpath d='M16 5l2.6 7.2L26 15l-7.4 2.8L16 25l-2.6-7.2L6 15l7.4-2.8z' fill='%23d4af37'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -83,6 +89,15 @@
 
       <main class="view" id="view" tabindex="-1"></main>
     </div>
+
+    <!-- Android-style bottom tab bar (mobile only) -->
+    <nav class="bottomnav" id="bottomNav" aria-label="Bottom navigation">
+      <a class="bn-item" href="#/dashboard" data-route="dashboard"><span class="bn-ico" data-icon="grid"></span><span>Home</span></a>
+      <a class="bn-item" href="#/analytics" data-route="analytics"><span class="bn-ico" data-icon="chart"></span><span>Stats</span></a>
+      <a class="bn-item" href="#/transactions" data-route="transactions"><span class="bn-ico" data-icon="list"></span><span>Money</span></a>
+      <a class="bn-item" href="#/settings" data-route="settings"><span class="bn-ico" data-icon="gear"></span><span>Settings</span></a>
+    </nav>
+    <button class="fab" id="fabAdd" aria-label="Add transaction"><span data-icon="plus"></span></button>
   </div>
 
   <!-- Modal + toast roots -->
@@ -92,6 +107,7 @@
 
   <script src="js/util.js"></script>
   <script src="js/charts.js"></script>
+  <script src="js/db.js"></script>
   <script src="js/store.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/views.js"></script>
